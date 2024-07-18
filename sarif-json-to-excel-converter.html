@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Convert SARIF JSON files to Excel with ease. Our tool simplifies the process of analyzing and sharing software security scan results.">
+    <title>SARIF JSON to Excel Converter | Simplify Security Analysis</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+            background: linear-gradient(to right, #e6f2ff, #ffffff, #e6f2ff);
+            color: #333;
+            line-height: 1.6;
+        }
+        .container {
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            padding: 30px;
+        }
+        h1 {
+            text-align: center;
+            color: #0056b3;
+            margin-bottom: 20px;
+            font-size: 2.5em;
+        }
+        .description {
+            text-align: center;
+            max-width: 800px;
+            margin: 0 auto 30px;
+            font-size: 1.1em;
+            color: #555;
+        }
+        #jsonViewerContainer {
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            padding: 10px;
+            margin-bottom: 20px;
+        }
+        #jsonViewer {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            max-height: 200px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+            background-color: #f5f5f5;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        #tableContainer {
+            max-height: 400px;
+            overflow-y: auto;
+            margin-top: 20px;
+        }
+        .table-wrapper {
+            overflow-x: auto;
+        }
+        table {
+            border-collapse: collapse;
+            width: 100%;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #0056b3;
+            color: white;
+            position: sticky;
+            top: 0;
+        }
+        button {
+            margin: 10px 5px;
+            padding: 10px 20px;
+            background-color: #0056b3;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #003d82;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        input[type="file"] {
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>SARIF JSON to Excel Converter</h1>
+        <p class="description">
+            Streamline your software security analysis with our SARIF JSON to Excel converter. 
+            This tool simplifies the process of transforming Static Application Security Testing (SAST) 
+            results from JSON format into easily readable Excel spreadsheets. Perfect for security 
+            professionals, developers, and QA teams looking to enhance their workflow and improve 
+            code quality.
+        </p>
+        
+        <input type="file" id="fileInput" accept=".json">
+        
+        <div id="jsonViewerContainer">
+            <h2>JSON Viewer (Compact)</h2>
+            <div id="jsonViewer"></div>
+        </div>
+        
+        <button onclick="tabulateJson()">Tabulate</button>
+        <button onclick="exportToExcel()" id="exportButton" disabled>Export to Excel</button>
+        
+        <div id="tableContainer"></div>
+    </div>
+
+    <script>
+        let jsonData = null;
+
+        document.getElementById('fileInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    jsonData = JSON.parse(e.target.result);
+                    document.getElementById('jsonViewer').textContent = JSON.stringify(jsonData, null, 2);
+                } catch (error) {
+                    alert('Invalid JSON format: ' + error.message);
+                }
+            };
+            reader.readAsText(file);
+        });
+
+        function extractRules(sarif) {
+            if (!sarif.runs || sarif.runs.length === 0) {
+                return [];
+            }
+
+            const rules = sarif.runs[0].tool.driver.rules;
+            return rules.map(rule => {
+                const flattened = {
+                    id: rule.id,
+                    name: rule.name,
+                    shortDescription: rule.shortDescription?.text,
+                    fullDescription: rule.fullDescription?.text,
+                    defaultLevel: rule.defaultConfiguration?.level,
+                    help: rule.help?.text || rule.help?.markdown,
+                    precision: rule.properties?.precision,
+                    tags: rule.properties?.tags?.join(', '),
+                    categories: rule.properties?.categories?.join(', '),
+                    cwe: rule.properties?.cwe?.join(', ')
+                };
+
+                // Add example commit fixes
+                if (rule.properties?.exampleCommitFixes) {
+                    rule.properties.exampleCommitFixes.forEach((fix, index) => {
+                        flattened[`commitFix_${index + 1}_URL`] = fix.commitURL;
+                        fix.lines.forEach((line, lineIndex) => {
+                            flattened[`commitFix_${index + 1}_line_${lineIndex + 1}`] = `${line.lineChange}: ${line.line}`;
+                        });
+                    });
+                }
+
+                return flattened;
+            });
+        }
+
+        function tabulateJson() {
+            if (!jsonData) {
+                alert('Please upload a SARIF JSON file first');
+                return;
+            }
+
+            const tableData = extractRules(jsonData);
+            renderTable(tableData);
+            document.getElementById('exportButton').disabled = false;
+        }
+
+        function renderTable(data) {
+            const tableWrapper = document.createElement('div');
+            tableWrapper.className = 'table-wrapper';
+            const table = document.createElement('table');
+            const thead = document.createElement('thead');
+            const tbody = document.createElement('tbody');
+
+            // Create header
+            const headerRow = document.createElement('tr');
+            Object.keys(data[0]).forEach(key => {
+                const th = document.createElement('th');
+                th.textContent = key;
+                headerRow.appendChild(th);
+            });
+            thead.appendChild(headerRow);
+            table.appendChild(thead);
+
+            // Create body
+            data.forEach(row => {
+                const tr = document.createElement('tr');
+                Object.values(row).forEach(value => {
+                    const td = document.createElement('td');
+                    td.textContent = value !== null && value !== undefined ? value.toString() : '';
+                    tr.appendChild(td);
+                });
+                tbody.appendChild(tr);
+            });
+            table.appendChild(tbody);
+
+            tableWrapper.appendChild(table);
+            const container = document.getElementById('tableContainer');
+            container.innerHTML = '';
+            container.appendChild(tableWrapper);
+        }
+
+        function exportToExcel() {
+            if (!jsonData) {
+                alert('Please upload a SARIF JSON file and tabulate it first');
+                return;
+            }
+
+            const fileName = prompt("Enter the file name for the Excel file:", "sarif_rules.xlsx");
+            if (!fileName) return; // User cancelled the prompt
+
+            const tableData = extractRules(jsonData);
+            const ws = XLSX.utils.json_to_sheet(tableData);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "SARIF Rules");
+            XLSX.writeFile(wb, fileName);
+        }
+    </script>
+</body>
+</html>
